@@ -241,7 +241,7 @@ if choice == "New Ticket":
         name, email = c1.text_input("Name"), c2.text_input("Email")
         cat = st.selectbox("Category", ["Beacon CRM", "Dashboards", "Data", "General Request", "New Feature", "Other"])
         pri = st.select_slider("Urgency", options=["Low", "Medium", "High"], value="Medium")
-        msg = st.text_area("Issue")
+        msg = st.text_area("Description")
         if st.form_submit_button("Submit"):
             t_id = str(uuid.uuid4())[:8].upper()
             supabase.table("tickets").insert({
