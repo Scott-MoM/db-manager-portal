@@ -1,7 +1,5 @@
-
 import streamlit as st
 from supabase import create_client, Client
-import uuid
 import pandas as pd
 import smtplib
 from email.mime.text import MIMEText
@@ -97,8 +95,8 @@ def ticket_popup(ticket):
     # === TAB 1: DETAILS & LOG ===
     with tab_details:
         c1, c2 = st.columns(2)
-        c1.write(f"**Ticket ID:** `{ticket['id']}`")
-        c2.write(f"**Customer:** {ticket['customer_name']}")
+        c1.write(f"**Ticket ID:** `{{ticket['id']}}`")
+        c2.write(f"**Customer:** {{ticket['customer_name']}}")
         
         st.divider()
         
@@ -140,8 +138,8 @@ def ticket_popup(ticket):
                     log_activity(ticket['id'], f"Ticket Closed. Resolution: {resolution_text}")
                     
                     # Email Customer
-                    subject = f"Ticket #{ticket['id']} Resolved"
-                    body = f"Hi {ticket['customer_name']},\n\nYour ticket is resolved:\n{resolution_text}\n\nBest,\nSupport Team"
+                    subject = f"Ticket #{{ticket['id']}} Resolved"
+                    body = f"Hi {{ticket['customer_name']}},\n\nYour ticket is resolved:\n{{resolution_text}}\n\nBest,\nSupport Team"
                     send_email(ticket['email'], subject, body)
                     
                     st.success("Resolved!"); st.rerun()
@@ -174,16 +172,16 @@ def ticket_popup(ticket):
                         # Styling based on type
                         if "SYSTEM:" in note['note_text']:
                             # System Log Style
-                            st.caption(f"⚙️ {fmt_time} - {note['note_text'].replace('⚙️ SYSTEM:', '')}")
+                            st.caption(f"⚙️ {{fmt_time}} - {{note['note_text'].replace('⚙️ SYSTEM:', '')}}")
                         elif "EMAIL SENT" in note['note_text']:
                             # Email Log Style
                             with st.chat_message("assistant"):
-                                st.write(f"**Email Out ({fmt_time}):**")
+                                st.write(f"**Email Out ({{fmt_time}}):**")
                                 st.caption(note['note_text'].split('\n', 1)[1] if '\n' in note['note_text'] else note['note_text'])
                         else:
                             # User Note Style
                             with st.chat_message("user"):
-                                st.write(f"**{author}** ({fmt_time}):")
+                                st.write(f"**{{author}}** ({{fmt_time}}):")
                                 st.write(note['note_text'])
                         st.divider()
                 else: st.caption("No history yet.")
@@ -193,9 +191,9 @@ def ticket_popup(ticket):
             if st.button("💾 Save Changes", use_container_width=True):
                 # 1. Detect Changes for the Log
                 changes = []
-                if new_status != ticket['status']: changes.append(f"Status: {ticket['status']} → {new_status}")
-                if new_priority != ticket['priority']: changes.append(f"Priority: {ticket['priority']} → {new_priority}")
-                if new_assign != ticket['assigned_to']: changes.append(f"Assignee: {ticket['assigned_to']} → {new_assign}")
+                if new_status != ticket['status']: changes.append(f"Status: {{ticket['status']}} → {{new_status}}")
+                if new_priority != ticket['priority']: changes.append(f"Priority: {{ticket['priority']}} → {{new_priority}}")
+                if new_assign != ticket['assigned_to']: changes.append(f"Assignee: {{ticket['assigned_to']}} → {{new_assign}}")
                 
                 # 2. Update DB
                 supabase.table("tickets").update({
@@ -215,7 +213,7 @@ def ticket_popup(ticket):
 
     # === TAB 2: REPLY ===
     with tab_reply:
-        st.write(f"**To:** {ticket['email']}")
+        st.write(f"**To:** {{ticket['email']}}")
         tmpl = st.selectbox("Templates", list(CANNED_RESPONSES.keys()))
         body_val = CANNED_RESPONSES[tmpl] if tmpl != "Select a template..." else ""
         
@@ -223,9 +221,9 @@ def ticket_popup(ticket):
         
         if st.button("✈️ Send Email"):
             if email_body:
-                if send_email(ticket['email'], f"Re: Ticket #{ticket['id']}", email_body):
+                if send_email(ticket['email'], f"Re: Ticket #{{ticket['id']}}", email_body):
                     st.success("Sent!")
-                    log_activity(ticket['id'], f"EMAIL SENT TO CUSTOMER:\n{email_body}")
+                    log_activity(ticket['id'], f"EMAIL SENT TO CUSTOMER:\n{{email_body}}")
                     st.rerun()
                 else: st.error("Failed.")
 
@@ -244,18 +242,31 @@ if choice == "New Ticket":
         pri = st.select_slider("Urgency", options=["Low", "Medium", "High"], value="Medium")
         msg = st.text_area("Issue")
         if st.form_submit_button("Submit"):
-            t_id = str(uuid.uuid4())[:8].upper()
-            supabase.table("tickets").insert({
-                "id": t_id, "customer_name": name, "email": email, "description": msg,
-                "priority": pri, "category": cat, "status": "New"
-            }).execute()
-            send_email(email, f"Ticket #{t_id}", "Received.")
-            st.success(f"Created #{t_id}")
+            # Let the DB assign the ticket ID (integer serial). Do not pass a string id.
+            try:
+                res = supabase.table("tickets").insert({
+                    "customer_name": name, "email": email, "description": msg,
+                    "priority": pri, "category": cat, "status": "New"
+                }).select("id").execute()
+            except Exception as e:
+                # Log details server-side and show a friendly error to the user
+                print("DB insert error:", e)
+                st.error("Could not create ticket. Check logs for details.")
+            else:
+                # res.data should contain the inserted row with the generated id
+                if getattr(res, 'data', None) and len(res.data) > 0:
+                    new_id = res.data[0].get('id')
+                    send_email(email, f"Ticket #{{new_id}}", "Received.")
+                    st.success(f"Created #{{new_id}}")
+                else:
+                    print("Insert returned no id. Response:", res)
+                    st.error("Ticket creation returned no id. Check DB and logs.")
 
 elif choice == "Track Ticket":
     st.title("🔍 Status")
     with st.form("track_ticket_form"):
-        tid = st.text_input("ID").upper()
+        tid = st.text_input("ID")
+        tid = tid.strip()
         tem = st.text_input("Email")
         st.caption("Enter the ticket ID and the same email used to create the ticket.")
         submitted = st.form_submit_button("Check")
@@ -269,8 +280,8 @@ elif choice == "Track Ticket":
             res = supabase.rpc("public_track_ticket", {"ticket_id": int(tid), "email_in": tem}).execute()
             if res.data:
                 t = res.data[0]
-                st.write(f"**Status:** {t['status']}")
-                if t.get('resolution_summary'): st.success(f"Resolution: {t['resolution_summary']}")
+                st.write(f"**Status:** {{t['status']}}")
+                if t.get('resolution_summary'): st.success(f"Resolution: {{t['resolution_summary']}}")
             else:
                 st.warning("No ticket found for that ID and email.")
 
