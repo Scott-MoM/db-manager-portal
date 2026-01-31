@@ -1,5 +1,7 @@
+
 import streamlit as st
 from supabase import create_client, Client
+import uuid
 import pandas as pd
 import smtplib
 from email.mime.text import MIMEText
@@ -95,8 +97,8 @@ def ticket_popup(ticket):
     # === TAB 1: DETAILS & LOG ===
     with tab_details:
         c1, c2 = st.columns(2)
-        c1.write(f"**Ticket ID:** `{{ticket['id']}}`")
-        c2.write(f"**Customer:** {{ticket['customer_name']}}")
+        c1.write(f"**Ticket ID:** `{ticket['id']}`")
+        c2.write(f"**Customer:** {ticket['customer_name']}")
         
         st.divider()
         
@@ -135,11 +137,11 @@ def ticket_popup(ticket):
                     }).eq("id", ticket['id']).execute()
                     
                     # Log Close
-                    log_activity(ticket['id'], f"Ticket Closed. Resolution: {{resolution_text}}")
+                    log_activity(ticket['id'], f"Ticket Closed. Resolution: {resolution_text}")
                     
                     # Email Customer
-                    subject = f"Ticket #{{ticket.get('ticket_code', ticket['id'])}} Resolved"
-                    body = f"Hi {{ticket['customer_name']}},\n\nYour ticket is resolved:\n{{resolution_text}}\n\nBest,\nSupport Team"
+                    subject = f"Ticket #{ticket['id']} Resolved"
+                    body = f"Hi {ticket['customer_name']},\n\nYour ticket is resolved:\n{resolution_text}\n\nBest,\nSupport Team"
                     send_email(ticket['email'], subject, body)
                     
                     st.success("Resolved!"); st.rerun()
@@ -150,7 +152,7 @@ def ticket_popup(ticket):
             # Issue Description
             with st.expander("View Issue Description", expanded=False):
                 st.info(ticket['description'])
-                if ticket.get('attachment_url'): st.image(ticket['attachment_url'], width=300)
+                if ticket['attachment_url']: st.image(ticket['attachment_url'], width=300)
 
             st.divider()
             
@@ -172,16 +174,16 @@ def ticket_popup(ticket):
                         # Styling based on type
                         if "SYSTEM:" in note['note_text']:
                             # System Log Style
-                            st.caption(f"⚙️ {{fmt_time}} - {{note['note_text'].replace('⚙️ SYSTEM:', '')}}")
+                            st.caption(f"⚙️ {fmt_time} - {note['note_text'].replace('⚙️ SYSTEM:', '')}")
                         elif "EMAIL SENT" in note['note_text']:
                             # Email Log Style
                             with st.chat_message("assistant"):
-                                st.write(f"**Email Out ({{fmt_time}}):**")
+                                st.write(f"**Email Out ({fmt_time}):**")
                                 st.caption(note['note_text'].split('\n', 1)[1] if '\n' in note['note_text'] else note['note_text'])
                         else:
                             # User Note Style
                             with st.chat_message("user"):
-                                st.write(f"**{{author}}** ({{fmt_time}}):")
+                                st.write(f"**{author}** ({fmt_time}):")
                                 st.write(note['note_text'])
                         st.divider()
                 else: st.caption("No history yet.")
@@ -191,9 +193,9 @@ def ticket_popup(ticket):
             if st.button("💾 Save Changes", use_container_width=True):
                 # 1. Detect Changes for the Log
                 changes = []
-                if new_status != ticket['status']: changes.append(f"Status: {{ticket['status']}} → {{new_status}}")
-                if new_priority != ticket['priority']: changes.append(f"Priority: {{ticket['priority']}} → {{new_priority}}")
-                if new_assign != ticket['assigned_to']: changes.append(f"Assignee: {{ticket['assigned_to']}} → {{new_assign}}")
+                if new_status != ticket['status']: changes.append(f"Status: {ticket['status']} → {new_status}")
+                if new_priority != ticket['priority']: changes.append(f"Priority: {ticket['priority']} → {new_priority}")
+                if new_assign != ticket['assigned_to']: changes.append(f"Assignee: {ticket['assigned_to']} → {new_assign}")
                 
                 # 2. Update DB
                 supabase.table("tickets").update({
@@ -213,7 +215,7 @@ def ticket_popup(ticket):
 
     # === TAB 2: REPLY ===
     with tab_reply:
-        st.write(f"**To:** {{ticket['email']}}")
+        st.write(f"**To:** {ticket['email']}")
         tmpl = st.selectbox("Templates", list(CANNED_RESPONSES.keys()))
         body_val = CANNED_RESPONSES[tmpl] if tmpl != "Select a template..." else ""
         
@@ -221,9 +223,9 @@ def ticket_popup(ticket):
         
         if st.button("✈️ Send Email"):
             if email_body:
-                if send_email(ticket['email'], f"Re: Ticket #{{ticket.get('ticket_code', ticket['id'])}}", email_body):
+                if send_email(ticket['email'], f"Re: Ticket #{ticket['id']}", email_body):
                     st.success("Sent!")
-                    log_activity(ticket['id'], f"EMAIL SENT TO CUSTOMER:\n{{email_body}}")
+                    log_activity(ticket['id'], f"EMAIL SENT TO CUSTOMER:\n{email_body}")
                     st.rerun()
                 else: st.error("Failed.")
 
@@ -240,21 +242,15 @@ if choice == "New Ticket":
         name, email = c1.text_input("Name"), c2.text_input("Email")
         cat = st.selectbox("Category", ["Beacon CRM", "Dashboards", "Data", "General Request", "New Feature", "Other"])
         pri = st.select_slider("Urgency", options=["Low", "Medium", "High"], value="Medium")
-        msg = st.text_area("Description")
+        msg = st.text_area("Issue")
         if st.form_submit_button("Submit"):
-            # Insert without providing id so DB (and ticket_code default) generates values
-            res = supabase.table("tickets").insert({
-                "customer_name": name, "email": email, "description": msg,
+            t_id = str(uuid.uuid4())[:8].upper()
+            supabase.table("tickets").insert({
+                "id": t_id, "customer_name": name, "email": email, "description": msg,
                 "priority": pri, "category": cat, "status": "New"
-            }).select("ticket_code,id").execute()
-
-            if getattr(res, "data", None):
-                created = res.data[0]
-                ticket_code = created.get("ticket_code") or str(created.get("id"))
-                send_email(email, f"Ticket #{{ticket_code}}", "Received.")
-                st.success(f"Created #{{ticket_code}}")
-            else:
-                st.error("Failed to create ticket.")
+            }).execute()
+            send_email(email, f"Ticket #{t_id}", "Received.")
+            st.success(f"Created #{t_id}")
 
 elif choice == "Track Ticket":
     st.title("🔍 Status")
@@ -267,13 +263,14 @@ elif choice == "Track Ticket":
     if submitted:
         if not tid or not tem:
             st.error("Please enter both Ticket ID and Email.")
+        elif not tid.isdigit():
+            st.error("Ticket ID must be a number.")
         else:
-            # Look up by ticket_code (alphanumeric) instead of numeric id
-            res = supabase.table("tickets").select("*").eq("ticket_code", tid).eq("email", tem).execute()
-            if getattr(res, "data", None):
+            res = supabase.rpc("public_track_ticket", {"ticket_id": int(tid), "email_in": tem}).execute()
+            if res.data:
                 t = res.data[0]
-                st.write(f"**Status:** {{t['status']}}")
-                if t.get('resolution_summary'): st.success(f"Resolution: {{t['resolution_summary']}}")
+                st.write(f"**Status:** {t['status']}")
+                if t.get('resolution_summary'): st.success(f"Resolution: {t['resolution_summary']}")
             else:
                 st.warning("No ticket found for that ID and email.")
 
@@ -297,7 +294,7 @@ elif choice == "Staff Dashboard":
         st.caption("Select a ticket to manage.")
         
         event = st.dataframe(
-            df[["id", "ticket_code", "category", "priority", "status", "assigned_to", "customer_name", "created_at"]],
+            df[["id", "category", "priority", "status", "assigned_to", "customer_name", "created_at"]],
             on_select="rerun", selection_mode="single-row",
             use_container_width=True, hide_index=True
         )
