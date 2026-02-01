@@ -5,6 +5,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
+import traceback
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Support Portal Pro", layout="wide", page_icon="🎫")
@@ -249,18 +250,35 @@ if choice == "New Ticket":
                     "priority": pri, "category": cat, "status": "New"
                 }).select("id").execute()
             except Exception as e:
-                # Log details server-side and show a friendly error to the user
-                print("DB insert error:", e)
-                st.error("Could not create ticket. Check logs for details.")
+                # Unexpected exception (network, library, etc.)
+                tb = traceback.format_exc()
+                print("DB insert exception:\n", tb)
+                st.error("Could not create ticket (exception). Check server logs.")
             else:
-                # res.data should contain the inserted row with the generated id
-                if getattr(res, 'data', None) and len(res.data) > 0:
-                    new_id = res.data[0].get('id')
-                    send_email(email, f"Ticket #{{new_id}}", "Received.")
-                    st.success(f"Created #{{new_id}}")
+                # Print the full response to server logs for debugging
+                print("Supabase insert response:", getattr(res, "__dict__", res))
+                # Try common places the client surfaces errors
+                err = getattr(res, "error", None)
+                if not err and isinstance(res, dict):
+                    err = res.get("error")
+
+                if err:
+                    # Show a helpful message to the UI but print full details in logs
+                    try:
+                        msg_err = err.get("message") if isinstance(err, dict) else str(err)
+                    except Exception:
+                        msg_err = str(err)
+                    print("Supabase returned error object:", err)
+                    st.error(f"DB insert error: {msg_err}")
                 else:
-                    print("Insert returned no id. Response:", res)
-                    st.error("Ticket creation returned no id. Check DB and logs.")
+                    # res.data should contain the inserted row with the generated id
+                    if getattr(res, 'data', None) and len(res.data) > 0:
+                        new_id = res.data[0].get('id')
+                        send_email(email, f"Ticket #{new_id}", "Received.")
+                        st.success(f"Created #{new_id}")
+                    else:
+                        print("Insert returned no id. Response:", res)
+                        st.error("Ticket creation returned no id. Check DB and logs.")
 
 elif choice == "Track Ticket":
     st.title("🔍 Status")
