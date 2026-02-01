@@ -7,6 +7,10 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 import traceback
 
+# DEBUG flag controlled by st.secrets["debug"]
+# Enable by setting debug = "true" (or "1", "yes") in Streamlit secrets; only enable in private/dev.
+DEBUG = str(st.secrets.get("debug", False)).lower() in ("1", "true", "yes")
+
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Support Portal Pro", layout="wide", page_icon="🎫")
 
@@ -151,7 +155,7 @@ def ticket_popup(ticket):
             # Issue Description
             with st.expander("View Issue Description", expanded=False):
                 st.info(ticket['description'])
-                if ticket['attachment_url']: st.image(ticket['attachment_url'], width=300)
+                if ticket.get('attachment_url'): st.image(ticket['attachment_url'], width=300)
 
             st.divider()
             
@@ -253,7 +257,11 @@ if choice == "New Ticket":
                 # Unexpected exception (network, library, etc.)
                 tb = traceback.format_exc()
                 print("DB insert exception:\n", tb)
-                st.error("Could not create ticket (exception). Check server logs.")
+                if DEBUG:
+                    # Show the error and traceback in the UI only when debug mode is enabled
+                    st.error(f"Could not create ticket (exception): {e}\n\n{tb}")
+                else:
+                    st.error("Could not create ticket (exception). Check server logs.")
             else:
                 # Print the full response to server logs for debugging
                 print("Supabase insert response:", getattr(res, "__dict__", res))
@@ -274,7 +282,7 @@ if choice == "New Ticket":
                     # res.data should contain the inserted row with the generated id
                     if getattr(res, 'data', None) and len(res.data) > 0:
                         new_id = res.data[0].get('id')
-                        send_email(email, f"Ticket #{new_id}", "Received.")
+                        send_email(email, f"Ticket #{new_id} Complete", "Received.")
                         st.success(f"Created #{new_id}")
                     else:
                         print("Insert returned no id. Response:", res)
